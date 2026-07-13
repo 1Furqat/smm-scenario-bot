@@ -13,6 +13,7 @@ Ularni .env fayliga yozing (README.md ga qarang).
 """
 
 import os
+import asyncio
 import logging
 import tempfile
 import threading
@@ -165,8 +166,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await tg_file.download_to_drive(audio_path)
 
     try:
-        # 2) Matnga o'giramiz
-        idea = transcribe(audio_path).strip()
+        # 2) Matnga o'giramiz (bloklovchi so'rov alohida oqimda)
+        idea = (await asyncio.to_thread(transcribe, audio_path)).strip()
         if not idea:
             await status_msg.edit_text("Ovozni tushuna olmadim 😕 Iltimos, qaytadan yuboring.")
             return
@@ -176,8 +177,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             parse_mode="Markdown",
         )
 
-        # 3) Ssenariy yozamiz
-        scenario = write_scenario(idea, project)
+        # 3) Ssenariy yozamiz (bloklovchi so'rov alohida oqimda)
+        scenario = await asyncio.to_thread(write_scenario, idea, project)
 
         await status_msg.delete()
         await send_long(update, f"🎬 *{project['name']} — ssenariy*\n\n{scenario}")
@@ -201,7 +202,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
     status_msg = await update.message.reply_text("✍️ Ssenariy yozyapman...")
     try:
-        scenario = write_scenario(idea, project)
+        scenario = await asyncio.to_thread(write_scenario, idea, project)
         await status_msg.delete()
         await send_long(update, f"🎬 *{project['name']} — ssenariy*\n\n{scenario}")
     except Exception as e:
@@ -241,7 +242,15 @@ def start_keepalive_server() -> None:
 # ------------------------------------------------------------------ main
 def main() -> None:
     start_keepalive_server()
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .read_timeout(60)
+        .write_timeout(60)
+        .connect_timeout(30)
+        .pool_timeout(30)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("loyiha", choose_project))
