@@ -161,7 +161,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     voice = update.message.voice or update.message.audio
     tg_file = await context.bot.get_file(voice.file_id)
 
-    with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
         audio_path = tmp.name
     await tg_file.download_to_drive(audio_path)
 
