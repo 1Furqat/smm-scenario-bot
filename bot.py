@@ -41,8 +41,8 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Gemini modellari — birinchisi asosiy, band bo'lsa keyingisiga o'tadi
-GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"]
+# Gemini modellari — birinchisi asosiy (kam band), band bo'lsa keyingisiga o'tadi
+GEMINI_MODELS = ["gemini-flash-lite-latest", "gemini-flash-latest"]
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
