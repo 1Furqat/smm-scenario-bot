@@ -11,6 +11,7 @@ Ishlashi uchun 2 ta kalit kerak (ikkalasi ham bepul):
 """
 
 import os
+import time
 import asyncio
 import logging
 import tempfile
@@ -20,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.genai import errors as genai_errors
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import (
@@ -39,8 +41,8 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Gemini modeli — o'zbek tilini yaxshi tushunadi (eng yangi Flash)
-GEMINI_MODEL = "gemini-flash-latest"
+# Gemini modellari — birinchisi asosiy, band bo'lsa keyingisiga o'tadi
+GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"]
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -74,12 +76,30 @@ def get_project(user_id: int) -> dict:
     return PROJECTS.get(key, PROJECTS[DEFAULT_PROJECT])
 
 
+def _generate(contents, config=None):
+    """Gemini'ga so'rov yuboradi. Model band bo'lsa (503) qayta urinadi,
+    keyin zaxira modelga o'tadi."""
+    last_exc = None
+    for model in GEMINI_MODELS:
+        for attempt in range(3):
+            try:
+                return gemini.models.generate_content(
+                    model=model, contents=contents, config=config
+                )
+            except genai_errors.ServerError as e:   # 5xx (503 "high demand" va h.k.)
+                last_exc = e
+                time.sleep(2 * (attempt + 1))       # 2s, 4s, 6s kutib qayta urinadi
+            except genai_errors.ClientError as e:    # 4xx (masalan model topilmadi)
+                last_exc = e
+                break                                # keyingi modelga o'tamiz
+    raise last_exc if last_exc else RuntimeError("Model javob bermadi")
+
+
 def transcribe(audio_path: str) -> str:
     """Ovoz faylini o'zbekcha matnga o'giradi (Gemini)."""
     with open(audio_path, "rb") as f:
         audio_bytes = f.read()
-    resp = gemini.models.generate_content(
-        model=GEMINI_MODEL,
+    resp = _generate(
         contents=[
             types.Part.from_bytes(data=audio_bytes, mime_type="audio/ogg"),
             (
@@ -94,8 +114,7 @@ def transcribe(audio_path: str) -> str:
 
 def write_scenario(idea_text: str, project: dict) -> str:
     """Loyiha stiliga mos ssenariy yozadi (Gemini)."""
-    resp = gemini.models.generate_content(
-        model=GEMINI_MODEL,
+    resp = _generate(
         config=types.GenerateContentConfig(
             system_instruction=project["system_prompt"],
             temperature=0.8,
