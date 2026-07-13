@@ -39,8 +39,8 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Gemini modeli — o'zbek tilini yaxshi tushunadi
-GEMINI_MODEL = "gemini-2.5-flash"
+# Gemini modeli — o'zbek tilini yaxshi tushunadi (eng yangi Flash)
+GEMINI_MODEL = "gemini-flash-latest"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
