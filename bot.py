@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-SMM Ssenariy Bot
-================
-Ovozli xabarni eshitadi -> matnga o'giradi (Groq Whisper) ->
-loyiha stiliga mos ssenariy yozadi (Groq Llama) -> text formatda qaytaradi.
+SMM Ssenariy Bot (Gemini versiyasi)
+===================================
+Ovozli xabarni eshitadi -> o'zbekcha matnga o'giradi (Google Gemini) ->
+loyiha stiliga mos ssenariy yozadi (Gemini) -> text formatda qaytaradi.
 
-Ishlashi uchun 2 ta bepul kalit kerak:
+Ishlashi uchun 2 ta kalit kerak (ikkalasi ham bepul):
   1) TELEGRAM_BOT_TOKEN  — @BotFather dan olinadi
-  2) GROQ_API_KEY        — https://console.groq.com dan bepul olinadi
-
-Ularni .env fayliga yozing (README.md ga qarang).
+  2) GEMINI_API_KEY      — https://aistudio.google.com/apikey dan olinadi
 """
 
 import os
@@ -20,7 +18,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dotenv import load_dotenv
-from groq import Groq
+from google import genai
+from google.genai import types
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import (
@@ -38,11 +37,10 @@ from projects import PROJECTS, DEFAULT_PROJECT
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Groq modellari (bepul)
-STT_MODEL = "whisper-large-v3"            # ovozni matnga o'girish (o'zbek tilini yaxshi tushunadi)
-CHAT_MODEL = "llama-3.3-70b-versatile"    # ssenariy yozish
+# Gemini modeli — o'zbek tilini yaxshi tushunadi
+GEMINI_MODEL = "gemini-2.5-flash"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -51,11 +49,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 if not TELEGRAM_BOT_TOKEN:
-    raise SystemExit("XATO: .env faylida TELEGRAM_BOT_TOKEN ko'rsatilmagan.")
-if not GROQ_API_KEY:
-    raise SystemExit("XATO: .env faylida GROQ_API_KEY ko'rsatilmagan.")
+    raise SystemExit("XATO: TELEGRAM_BOT_TOKEN ko'rsatilmagan.")
+if not GEMINI_API_KEY:
+    raise SystemExit("XATO: GEMINI_API_KEY ko'rsatilmagan.")
 
-groq_client = Groq(api_key=GROQ_API_KEY)
+gemini = genai.Client(api_key=GEMINI_API_KEY)
 
 # Foydalanuvchi -> tanlangan loyiha (xotirada saqlanadi)
 user_project: dict[int, str] = {}
@@ -77,37 +75,38 @@ def get_project(user_id: int) -> dict:
 
 
 def transcribe(audio_path: str) -> str:
-    """Ovoz faylini matnga o'giradi (o'zbekcha)."""
+    """Ovoz faylini o'zbekcha matnga o'giradi (Gemini)."""
     with open(audio_path, "rb") as f:
-        result = groq_client.audio.transcriptions.create(
-            file=(os.path.basename(audio_path), f.read()),
-            model=STT_MODEL,
-            language="uz",          # o'zbek tili
-            response_format="text",
-        )
-    # response_format="text" bo'lsa result to'g'ridan-to'g'ri string bo'ladi
-    return result if isinstance(result, str) else getattr(result, "text", str(result))
+        audio_bytes = f.read()
+    resp = gemini.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[
+            types.Part.from_bytes(data=audio_bytes, mime_type="audio/ogg"),
+            (
+                "Bu ovozli xabar o'zbek tilida. Uni so'zma-so'z, aniq va tabiiy "
+                "o'zbekcha matnga o'gir. Faqat o'girilgan matnni qaytar, boshqa "
+                "hech narsa (izoh, tirnoq, sarlavha) yozma."
+            ),
+        ],
+    )
+    return (resp.text or "").strip()
 
 
 def write_scenario(idea_text: str, project: dict) -> str:
-    """Loyiha stiliga mos ssenariy yozadi."""
-    completion = groq_client.chat.completions.create(
-        model=CHAT_MODEL,
-        temperature=0.8,
-        max_tokens=2000,
-        messages=[
-            {"role": "system", "content": project["system_prompt"]},
-            {
-                "role": "user",
-                "content": (
-                    "Quyida men ovozli xabarda tushuntirgan g'oya (matnga o'girilgan). "
-                    "Shuni tushunib, odamdek fikrlab, loyiha stiliga mos to'liq ssenariy yozib ber:\n\n"
-                    f"«{idea_text}»"
-                ),
-            },
+    """Loyiha stiliga mos ssenariy yozadi (Gemini)."""
+    resp = gemini.models.generate_content(
+        model=GEMINI_MODEL,
+        config=types.GenerateContentConfig(
+            system_instruction=project["system_prompt"],
+            temperature=0.8,
+        ),
+        contents=[
+            "Quyida men ovozli xabarda tushuntirgan g'oya (matnga o'girilgan). "
+            "Shuni tushunib, odamdek fikrlab, loyiha stiliga mos to'liq ssenariy "
+            f"yozib ber:\n\n«{idea_text}»"
         ],
     )
-    return completion.choices[0].message.content
+    return (resp.text or "").strip()
 
 
 # ------------------------------------------------------------------ handlerlar
@@ -157,7 +156,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
     status_msg = await update.message.reply_text("🎧 Ovozni eshityapman...")
 
-    # 1) Faylni yuklab olamiz
     voice = update.message.voice or update.message.audio
     tg_file = await context.bot.get_file(voice.file_id)
 
@@ -166,8 +164,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await tg_file.download_to_drive(audio_path)
 
     try:
-        # 2) Matnga o'giramiz (bloklovchi so'rov alohida oqimda)
-        idea = (await asyncio.to_thread(transcribe, audio_path)).strip()
+        # 1) Ovoz -> matn (bloklovchi so'rov alohida oqimda)
+        idea = await asyncio.to_thread(transcribe, audio_path)
         if not idea:
             await status_msg.edit_text("Ovozni tushuna olmadim 😕 Iltimos, qaytadan yuboring.")
             return
@@ -177,7 +175,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             parse_mode="Markdown",
         )
 
-        # 3) Ssenariy yozamiz (bloklovchi so'rov alohida oqimda)
+        # 2) Ssenariy yozamiz
         scenario = await asyncio.to_thread(write_scenario, idea, project)
 
         await status_msg.delete()
@@ -218,8 +216,7 @@ async def send_long(update: Update, text: str) -> None:
 
 
 # ------------------------------------------------------------------ keep-alive
-# Bulutli serverlar (Koyeb, Render va h.k.) ochiq port talab qiladi.
-# PORT muhit o'zgaruvchisi bo'lsa, kichik HTTP server ishga tushiramiz.
+# Bulutli serverlar ochiq port talab qiladi (Railway PORT beradi).
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -227,13 +224,13 @@ class _HealthHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot ishlayapti")
 
     def log_message(self, *args):
-        pass  # loglarni bosmaymiz
+        pass
 
 
 def start_keepalive_server() -> None:
     port = os.getenv("PORT")
     if not port:
-        return  # lokalda kerak emas
+        return
     server = HTTPServer(("0.0.0.0", int(port)), _HealthHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     logger.info(f"Keep-alive server {port}-portda ishga tushdi")
@@ -258,7 +255,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    logger.info("Bot ishga tushdi. To'xtatish: Ctrl+C")
+    logger.info("Bot ishga tushdi (Gemini). To'xtatish: Ctrl+C")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
